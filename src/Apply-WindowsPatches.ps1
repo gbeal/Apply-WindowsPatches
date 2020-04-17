@@ -24,13 +24,19 @@ function Install-WindowsPatches {
     param (
         [Parameter(ValueFromPipeline = $true)]
         [string[]]
-        $ServerNames,
+        $ServerNames = $env:COMPUTERNAME,
+
+        [switch]
+        $MicrosoftUpdate,
 
         [switch]
         $Install,
 
         [switch]
         $RebootNow,
+
+        [switch]
+        $CheckLastUpdate,
 
         [datetime]
         $RebootAt = (get-date)
@@ -46,13 +52,32 @@ function Install-WindowsPatches {
         foreach ($server in $ServerNames) {
             try {
                 #get a list of patches
-                $updates = Get-WindowsUpdate -ComputerName $server
+                $updates = Get-WindowsUpdate -ComputerName $server -MicrosoftUpdate:$MicrosoftUpdates
+
+                if ($CheckLastUpdate) { 
+                    #get last update data
+                    try {
+                        $lastUpdate = Get-WULastResults -ComputerName $server
+                        Write-Host "$server was last updated on $($lastUpdate.LastInstallationSuccessDate)"
+                    }
+                    catch {
+                        Write-Warning "Could not last update status for $server.  You might not have permissions to do that."
+                    }
+                }
+
+                #What is the update status of this server?
                 if ($updates.Count -eq 0) {
                     Write-Host "There are no pending updates for $server"
                     continue
                 }
                 else {
-                    Write-host "There are pending updates for $server"
+                    Write-host "There are $($updates.Count) pending updates for $server"
+
+                    $rebootRequired = $updates.Where( { $_.RebootRequired }).Count -gt 0
+                    if ($rebootRequired) {
+                        Write-Warning "***A reboot of $server IS required***"
+                    }
+
                     $updates | Format-Table -AutoSize
                 }
             }
@@ -63,22 +88,22 @@ function Install-WindowsPatches {
 
             if ($Install) {
                 #if installing, behavior varies based on parameters
-                if ($RebootNow) {
+                if ($RebootNow -and (-not $rebootRequired)) {
                     try {
                         #install and reboot when done
                         Write-Host "Installing updates for $server and rebooting when complete"
-                        Get-WindowsUpdate -Install -AcceptAll -AutoReboot -ComputerName $server
+                        Get-WindowsUpdate -Install -AcceptAll -AutoReboot -ComputerName $server -MicrosoftUpdate:$MicrosoftUpdates
                     }
                     catch {
                         Write-Error "An error occurred while trying to install patches and auto-reboot"
                         $_
                     }
                 }
-                elseif ($RebootAt -gt (get-date)) {
+                elseif ($RebootAt -gt (get-date) -and (-not $rebootRequired)) {
                     try {
                         #if you supplied a reboot date in the future, schedule reboot for that time
                         Write-host "Installing updates for $server and rebooting at $RebootAt"
-                        Get-WindowsUpdate -Install -AcceptAll -ScheduleReboot $RebootAt -ComputerName $server
+                        Get-WindowsUpdate -Install -AcceptAll -ScheduleReboot $RebootAt -ComputerName $server -MicrosoftUpdate:$MicrosoftUpdates
                     }
                     catch {
                         Write-Error "An error occurred while trying to install patches and schedule reboot for $RebootAt"
@@ -89,7 +114,7 @@ function Install-WindowsPatches {
                     try {
                         #install updates and you have to reboot manually
                         Write-Host "Installing updates for $server.  You will have to reboot it manually, if required"
-                        Get-WindowsUpdate -Install -AcceptAll -ComputerName $server
+                        Get-WindowsUpdate -Install -AcceptAll -ComputerName $server -MicrosoftUpdate:$MicrosoftUpdates
                     }
                     catch {
                         Write-Error "An error occurred while trying to install patches"
